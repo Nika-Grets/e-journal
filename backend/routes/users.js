@@ -97,20 +97,26 @@ async function userRoutes(fastify, options) {
     }
   });
 
-  // PUT /api/users/:id  — обновить пользователя
+  // PUT /api/users/:id  — обновить пользователя (включая email и ФИО)
   fastify.put('/:id', async (request, reply) => {
     const { id } = request.params;
-    const { first_name, last_name, middle_name, role_id, is_active } = request.body;
+    const { first_name, last_name, middle_name, role_id, is_active, email } = request.body;
     const t = await sequelize.transaction();
     try {
       await sequelize.query(
         `UPDATE profiles SET first_name = ?, last_name = ?, middle_name = ? WHERE ID = ?`,
         { replacements: [first_name, last_name, middle_name || null, id], transaction: t }
       );
-      if (role_id !== undefined) {
+      const setClause = [];
+      const vals = [];
+      if (role_id   !== undefined) { setClause.push('role_id = ?');  vals.push(role_id); }
+      if (is_active !== undefined) { setClause.push('is_active = ?'); vals.push(is_active); }
+      if (email     !== undefined && email !== '') { setClause.push('email = ?'); vals.push(email); }
+      if (setClause.length > 0) {
+        vals.push(id);
         await sequelize.query(
-          `UPDATE users SET role_id = ?, is_active = ? WHERE ID = ?`,
-          { replacements: [role_id, is_active !== undefined ? is_active : 1, id], transaction: t }
+          `UPDATE users SET ${setClause.join(', ')} WHERE ID = ?`,
+          { replacements: vals, transaction: t }
         );
       }
       await t.commit();
@@ -147,7 +153,9 @@ async function userRoutes(fastify, options) {
     if (startDate) { whereConditions.push('l.date >= ?'); replacements.push(startDate); }
     if (endDate) { whereConditions.push('l.date <= ?'); replacements.push(endDate); }
 
-    const where = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
+    const where = whereConditions.length > 0
+      ? 'WHERE g.student_ID IS NOT NULL AND ' + whereConditions.join(' AND ')
+      : 'WHERE g.student_ID IS NOT NULL';
 
     const data = await sequelize.query(
       `SELECT p.last_name || ' ' || p.first_name AS student_name,
@@ -223,6 +231,41 @@ async function userRoutes(fastify, options) {
         replacements: [startDate || null, startDate || null, endDate || null, endDate || null],
         type: Sequelize.QueryTypes.SELECT
       }
+    );
+    return data;
+  });
+
+  // GET /api/users/reports/curriculum  — отчёт по учебному плану
+  fastify.get('/reports/curriculum', {
+    preHandler: [fastify.checkPermission('reports:full')]
+  }, async (request, reply) => {
+    const { class_id } = request.query;
+    const classFilter = class_id ? 'AND l.class_ID = ?' : '';
+    const replacements = class_id ? [class_id] : [];
+
+    const data = await sequelize.query(
+      `SELECT
+         c.level || c.letter AS class_name,
+         c.level             AS class_level,
+         s.name              AS subject_name,
+         p.last_name || ' ' || p.first_name AS teacher_name,
+         COUNT(DISTINCT l.ID)                                              AS total_lessons,
+         COUNT(DISTINCT CASE WHEN l.topic_ID IS NOT NULL THEN l.ID END)   AS covered_lessons,
+         COUNT(DISTINCT l.topic_ID)                                        AS covered_topics,
+         (SELECT COUNT(*) FROM topics t
+          JOIN level lv ON t.grade_level = lv.ID
+          WHERE t.subject_id = l.subject_ID AND lv.level = c.level)       AS planned_topics,
+         (SELECT COALESCE(SUM(t.hours_allocated),0) FROM topics t
+          JOIN level lv ON t.grade_level = lv.ID
+          WHERE t.subject_id = l.subject_ID AND lv.level = c.level)       AS planned_hours
+       FROM lessons l
+       JOIN classes  c ON l.class_ID   = c.ID
+       JOIN subjects s ON l.subject_ID = s.ID
+       LEFT JOIN profiles p ON l.teacher_ID = p.ID
+       WHERE l.teacher_ID IS NOT NULL ${classFilter}
+       GROUP BY l.class_ID, l.subject_ID, l.teacher_ID
+       ORDER BY class_name, subject_name`,
+      { replacements, type: Sequelize.QueryTypes.SELECT }
     );
     return data;
   });
