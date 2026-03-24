@@ -1,9 +1,46 @@
 /* eslint-disable no-unused-vars */
 
-import React, { useState } from 'react';
-import { Calendar, BookOpen, ClipboardList } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Calendar, BookOpen, ClipboardList, CheckCircle, Clock } from 'lucide-react';
+import api from '../../api/axios';
 import { useWeek, useTeacherLessons, fmtDate, DAY_NAMES } from './scheduleUtils';
 import { WeekNav, DayCard, Toast, HomeworkModal } from './ScheduleUI';
+
+// Хинт часов по теме для учителя (read-only, загружается по topic_id)
+function TopicHoursHint({ lesson }) {
+  const [usage, setUsage] = useState(null);
+
+  useEffect(() => {
+    if (!lesson?.topic_ID || !lesson?.subject_ID || !lesson?.grade_level) return;
+    api.get('/api/topics/usage', {
+      params: {
+        class_id:    lesson.class_ID,
+        subject_id:  lesson.subject_ID,
+        grade_level: lesson.grade_level,
+      }
+    }).then(r => {
+      const found = r.data.find(u => u.topic_id === lesson.topic_ID);
+      setUsage(found ?? null);
+    }).catch(() => {});
+  }, [lesson?.topic_ID, lesson?.subject_ID, lesson?.grade_level, lesson?.class_ID]);
+
+  if (!usage || !usage.hours_allocated) return null;
+
+  const done     = Number(usage.hours_done);
+  const planned  = Number(usage.hours_allocated);
+  const isDone   = done >= planned;
+  const fmtH = h => h % 1 === 0 ? String(h) : h.toFixed(1);
+
+  return (
+    <div style={{ paddingLeft: 26, display: 'flex', alignItems: 'center', gap: 4, fontSize: 11,
+      color: isDone ? '#16a34a' : '#64748b' }}>
+      {isDone
+        ? <><CheckCircle size={10}/> Тема завершена ({fmtH(done)} / {fmtH(planned)} ч.)</>
+        : <><Clock size={10}/> {fmtH(done)} / {fmtH(planned)} ч. пройдено</>
+      }
+    </div>
+  );
+}
 
 function TeacherLessonRow({ lesson, onHomework }) {
   return (
@@ -21,6 +58,7 @@ function TeacherLessonRow({ lesson, onHomework }) {
           <BookOpen size={11}/> {lesson.topic_title}
         </div>
       )}
+      {lesson.topic_ID && <TopicHoursHint lesson={lesson}/>}
       {lesson.homework_content && (
         <div style={{ paddingLeft: 26, fontSize: 12, color: '#059669', background: '#ecfdf5', borderRadius: 5, padding: '3px 8px', margin: '2px 0 0 26px' }}>
           ДЗ: {lesson.homework_content.slice(0, 70)}{lesson.homework_content.length > 70 ? '...' : ''}

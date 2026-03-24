@@ -61,6 +61,7 @@ function makeScheduleDb(sequelize) {
     return sequelize.query(
       `SELECT l.*, s.name AS subject_name,
               c.level || c.letter AS class_name,
+              c.level AS grade_level,
               t.title AS topic_title, ls.start_time,
               h.ID AS homework_id, h.content AS homework_content,
               h.deadline AS homework_deadline, h.attachments AS homework_files

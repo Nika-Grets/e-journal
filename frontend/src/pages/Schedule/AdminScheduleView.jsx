@@ -1,8 +1,9 @@
+/* eslint-disable no-unused-vars */
 // Вид расписания для администратора: редактирование уроков по классам.
-import React, { useState } from 'react';
-import { Calendar, Copy, Info } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Calendar, Copy, Info, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
 import api from '../../api/axios';
-import { useWeek, useMeta, useClassLessons, useTopics } from './scheduleUtils';
+import { useWeek, useMeta, useClassLessons, useTopics, useTopicUsage } from './scheduleUtils';
 import { WeekNav, DayCard, Toast, FillWeeksModal, navBtn } from './ScheduleUI';
 
 const cellSel = {
@@ -12,17 +13,96 @@ const cellSel = {
 };
 const numBadge = { fontSize: 11, color: '#94a3b8', width: 18, textAlign: 'center', flexShrink: 0 };
 
+// ── Хинт прогресса часов по теме ─────────────────────────────────────────────
+
+function TopicHint({ usage, lessonDurationMin }) {
+  if (!usage) return null;
+
+  const { hours_allocated, hours_done, hours_scheduled } = usage;
+  // Длительность текущего урока в часах (45 = 1ч, 90 = 2ч)
+  const thisLessonHours = lessonDurationMin ? lessonDurationMin / 45 : 1;
+
+  if (!hours_allocated) return null;
+
+  const pct         = Math.min(100, Math.round((hours_done / hours_allocated) * 100));
+  const remaining   = hours_allocated - hours_done;
+  const afterThis   = hours_scheduled / 45; // уже запланировано (включая будущие)
+  const isDone      = hours_done >= hours_allocated;
+  const willExceed  = !isDone && (hours_scheduled / 45) > hours_allocated;
+
+  // Цвет прогресс-бара
+  const barColor = isDone ? '#10b981' : pct >= 60 ? '#f59e0b' : '#3b82f6';
+
+  return (
+    <div style={{ marginTop: 3, padding: '4px 6px', borderRadius: 5,
+      background: isDone ? '#f0fdf4' : willExceed ? '#fff7ed' : '#f8fafc',
+      border: `1px solid ${isDone ? '#bbf7d0' : willExceed ? '#fed7aa' : '#e2e8f0'}` }}>
+
+      {/* Прогресс-бар */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
+        <div style={{ flex: 1, height: 4, background: '#e2e8f0', borderRadius: 2, overflow: 'hidden' }}>
+          <div style={{ width: `${pct}%`, height: '100%', background: barColor, borderRadius: 2 }}/>
+        </div>
+        <span style={{ fontSize: 10, color: barColor, fontWeight: 700, whiteSpace: 'nowrap' }}>
+          {hours_done % 1 === 0 ? hours_done : hours_done.toFixed(1)} / {hours_allocated} ч
+        </span>
+      </div>
+
+      {/* Статусная строка */}
+      {isDone ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: '#16a34a', fontWeight: 600 }}>
+          <CheckCircle size={10}/> Тема завершена — часов достаточно
+        </div>
+      ) : willExceed ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: '#ea580c', fontWeight: 600 }}>
+          <AlertTriangle size={10}/>
+          Запланировано больше плана (осталось {remaining % 1 === 0 ? remaining : remaining.toFixed(1)} ч)
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, color: '#64748b' }}>
+          <Clock size={10}/>
+          Осталось {remaining % 1 === 0 ? remaining : remaining.toFixed(1)} ч по теме
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Слот одного урока в сетке расписания ─────────────────────────────────────
 
-function LessonSlot({ lesson, num, date, classId, gradeLevel, meta, onSave, fetchTopics, getTopics }) {
+function LessonSlot({ lesson, num, date, classId, gradeLevel, meta, onSave,
+                      fetchTopics, getTopics, fetchUsage, getUsage, invalidateUsage }) {
   const subjectId = lesson?.subject_ID || '';
   const topics    = getTopics(subjectId, gradeLevel);
 
-  // БАГ-ФИX: используем key на компоненте (см. AdminScheduleView) вместо
-  // неуправляемого defaultValue, чтобы поле кабинета сбрасывалось при смене класса/недели.
   const [room, setRoom] = useState(lesson?.room || '');
 
-  const update = (field, value) => onSave(date, num, field, value, lesson);
+  useEffect(() => {
+    if (subjectId && gradeLevel) {
+      fetchTopics(subjectId, gradeLevel);
+    }
+  }, [subjectId, gradeLevel, fetchTopics]);
+
+  // Длительность этого урока по расписанию звонков
+  const lessonDur = meta.config?.lesson_durations?.[num] ?? null;
+
+  const update = async (field, value) => {
+    await onSave(date, num, field, value, lesson);
+    // После сохранения сбрасываем кэш usage чтобы пересчиталось
+    if ((field === 'topic_ID' || field === 'subject_ID') && subjectId && gradeLevel) {
+      invalidateUsage(classId, subjectId, gradeLevel);
+      if (subjectId) fetchUsage(classId, subjectId, gradeLevel);
+    }
+  };
+
+  // Загрузить usage при наведении/открытии дропдауна тем
+  const onTopicFocus = () => {
+    fetchTopics(subjectId, gradeLevel);
+    if (classId && subjectId && gradeLevel) fetchUsage(classId, subjectId, gradeLevel);
+  };
+
+  const topicId = lesson?.topic_ID;
+  const usage   = topicId ? getUsage(classId, subjectId, gradeLevel, topicId) : null;
 
   return (
     <div style={{ display: 'flex', padding: '7px 12px', borderBottom: '1px solid #f1f5f9', alignItems: 'flex-start', gap: 8 }}>
@@ -46,7 +126,6 @@ function LessonSlot({ lesson, num, date, classId, gradeLevel, meta, onSave, fetc
         </select>
 
         <div style={{ display: 'flex', gap: 4 }}>
-          {/* БАГ-ФИX: управляемый input (value + onChange) вместо defaultValue */}
           <input
             placeholder="Каб."
             value={room}
@@ -58,7 +137,7 @@ function LessonSlot({ lesson, num, date, classId, gradeLevel, meta, onSave, fetc
             <select
               value={lesson?.topic_ID || ''}
               style={{ ...cellSel, flex: 1 }}
-              onFocus={() => fetchTopics(subjectId, gradeLevel)}
+              onFocus={onTopicFocus}
               onChange={e => update('topic_ID', e.target.value)}
             >
               <option value="">— Тема —</option>
@@ -66,6 +145,11 @@ function LessonSlot({ lesson, num, date, classId, gradeLevel, meta, onSave, fetc
             </select>
           )}
         </div>
+
+        {/* Хинт прогресса часов по выбранной теме */}
+        {topicId && subjectId && gradeLevel && (
+          <TopicHint usage={usage} lessonDurationMin={lessonDur}/>
+        )}
       </div>
     </div>
   );
@@ -79,6 +163,7 @@ export default function AdminScheduleView() {
   const [classId,   setClassId]               = useState('');
   const { lessons, reload }                   = useClassLessons(classId, weekDates);
   const { fetchTopics, getTopics }            = useTopics();
+  const { fetchUsage, getUsage, invalidateUsage } = useTopicUsage();
   const [toast,     setToast]                 = useState(null);
   const [showFill,  setShowFill]              = useState(false);
 
@@ -150,13 +235,12 @@ export default function AdminScheduleView() {
                 const lesson = getLesson(date, num);
                 return (
                   <LessonSlot
-                    // key включает ID урока — при смене класса/недели компонент
-                    // пересоздаётся и useState(room) сбрасывается корректно
                     key={lesson?.ID ?? `${date}-${num}`}
                     lesson={lesson} num={num} date={date}
                     classId={classId} gradeLevel={gradeLevel}
                     meta={meta} onSave={handleSave}
                     fetchTopics={fetchTopics} getTopics={getTopics}
+                    fetchUsage={fetchUsage} getUsage={getUsage} invalidateUsage={invalidateUsage}
                   />
                 );
               })}

@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 // Утилиты и хуки для страниц расписания.
 // Все хуки экспортируются отдельно — каждый делает одно дело.
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
@@ -111,4 +112,42 @@ export function useTopics() {
     cacheRef.current[`${subjectId}_${gradeLevel}`] || [];
 
   return { fetchTopics, getTopics };
+}
+
+// ── Хук: статистика использования часов по темам ─────────────────────────────
+// Для данного класса + предмета + уровня класса возвращает Map<topic_id, usage>
+// usage = { hours_allocated, hours_scheduled, hours_done }
+// Кешируется на время жизни компонента.
+
+export function useTopicUsage() {
+  const cacheRef = useRef({});
+  const [, forceUpdate] = useState(0);
+
+  const fetchUsage = useCallback(async (classId, subjectId, gradeLevel) => {
+    if (!subjectId || !gradeLevel) return;
+    const key = `${classId}_${subjectId}_${gradeLevel}`;
+    if (cacheRef.current[key]) return;
+    try {
+      const r = await api.get('/api/topics/usage', {
+        params: { class_id: classId, subject_id: subjectId, grade_level: gradeLevel },
+      });
+      const map = {};
+      for (const row of r.data) map[row.topic_id] = row;
+      cacheRef.current[key] = map;
+      forceUpdate(n => n + 1);
+    } catch { /* тихо игнорируем */ }
+  }, []);
+
+  const invalidateUsage = useCallback((classId, subjectId, gradeLevel) => {
+    const key = `${classId}_${subjectId}_${gradeLevel}`;
+    delete cacheRef.current[key];
+    forceUpdate(n => n + 1);
+  }, []);
+
+  const getUsage = (classId, subjectId, gradeLevel, topicId) => {
+    const key = `${classId}_${subjectId}_${gradeLevel}`;
+    return cacheRef.current[key]?.[topicId] ?? null;
+  };
+
+  return { fetchUsage, getUsage, invalidateUsage };
 }

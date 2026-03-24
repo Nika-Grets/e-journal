@@ -249,19 +249,23 @@ async function userRoutes(fastify, options) {
          c.level             AS class_level,
          s.name              AS subject_name,
          p.last_name || ' ' || p.first_name AS teacher_name,
-         COUNT(DISTINCT l.ID)                                              AS total_lessons,
-         COUNT(DISTINCT CASE WHEN l.topic_ID IS NOT NULL THEN l.ID END)   AS covered_lessons,
-         COUNT(DISTINCT l.topic_ID)                                        AS covered_topics,
+         COUNT(DISTINCT l.ID)                                                         AS total_lessons,
+         COUNT(DISTINCT CASE WHEN l.topic_ID IS NOT NULL AND l.date <= date('now')
+                              THEN l.ID END)                                           AS covered_lessons,
+         COUNT(DISTINCT CASE WHEN l.date <= date('now') THEN l.topic_ID END)          AS covered_topics,
+         COALESCE(SUM(CASE WHEN l.date <= date('now') AND l.topic_ID IS NOT NULL
+                           THEN CAST(ls.duration AS REAL) / 45.0 ELSE 0 END), 0)     AS covered_hours,
          (SELECT COUNT(*) FROM topics t
           JOIN level lv ON t.grade_level = lv.ID
-          WHERE t.subject_id = l.subject_ID AND lv.level = c.level)       AS planned_topics,
+          WHERE t.subject_id = l.subject_ID AND lv.level = c.level)                  AS planned_topics,
          (SELECT COALESCE(SUM(t.hours_allocated),0) FROM topics t
           JOIN level lv ON t.grade_level = lv.ID
-          WHERE t.subject_id = l.subject_ID AND lv.level = c.level)       AS planned_hours
+          WHERE t.subject_id = l.subject_ID AND lv.level = c.level)                  AS planned_hours
        FROM lessons l
        JOIN classes  c ON l.class_ID   = c.ID
        JOIN subjects s ON l.subject_ID = s.ID
        LEFT JOIN profiles p ON l.teacher_ID = p.ID
+       LEFT JOIN lesson_schedule ls ON ls.lesson_num = l.lesson_num
        WHERE l.teacher_ID IS NOT NULL ${classFilter}
        GROUP BY l.class_ID, l.subject_ID, l.teacher_ID
        ORDER BY class_name, subject_name`,
