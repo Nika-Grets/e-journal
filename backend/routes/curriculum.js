@@ -98,11 +98,12 @@ async function curriculumRoutes(fastify, options) {
          COALESCE(SUM(CAST(ls.duration AS REAL)) / 45.0, 0)  AS hours_scheduled,
          COALESCE(SUM(CASE WHEN l.date <= date('now') THEN CAST(ls.duration AS REAL) ELSE 0 END) / 45.0, 0) AS hours_done
        FROM topics t
+       JOIN level lv ON t.grade_level = lv.ID
        LEFT JOIN lessons l
          ON l.topic_ID = t.ID
          ${class_id ? 'AND l.class_ID = ?' : ''}
        LEFT JOIN lesson_schedule ls ON ls.lesson_num = l.lesson_num
-       WHERE t.subject_id = ? AND t.grade_level = ?
+       WHERE t.subject_id = ? AND lv.level = ?
        GROUP BY t.ID`,
       {
         replacements: class_id

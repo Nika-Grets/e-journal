@@ -13,10 +13,16 @@ function makeScheduleDb(sequelize) {
     const [subjects, teachers, classes, configRows] = await Promise.all([
       sequelize.query('SELECT ID, name FROM subjects ORDER BY name', { type: Q.SELECT }),
       sequelize.query(
-        `SELECT u.ID, p.last_name || ' ' || SUBSTR(p.first_name,1,1) || '.' AS name
-         FROM users u JOIN profiles p ON u.ID = p.ID
-         WHERE u.role_id = (SELECT ID FROM roles WHERE name = 'TEACHER')
-         ORDER BY p.last_name`,
+        `SELECT 
+    u.ID,
+    p.last_name || ' ' || SUBSTR(p.first_name,1,1) || '.' AS name,
+    GROUP_CONCAT(ts.subject_ID) AS subject_ids 
+FROM users u 
+JOIN profiles p ON u.ID = p.ID 
+LEFT JOIN teacher_subjects ts ON u.ID = ts.teacher_ID 
+WHERE u.role_id = (SELECT ID FROM roles WHERE name = 'TEACHER') 
+GROUP BY u.ID 
+ORDER BY name; `,
         { type: Q.SELECT }
       ),
       sequelize.query(
